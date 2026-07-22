@@ -1,32 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, redirect, useLoaderData, useNavigate } from "react-router-dom";
 import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import SigmaLib from "sigma";
 
 import { useWikiConfig } from "@/client/wiki-config";
-import { getTopicColor, type TopicAliasConfig } from "@/lib/wiki-config";
+import type { TopicAliasConfig } from "@/lib/wiki-config";
 import type { GraphData, GraphNode } from "@/lib/wiki-shared";
+import { Graph3DView } from "@/components/graph-3d-view";
+import {
+  AMBIENT_AMPLITUDE_RATIO,
+  AMBIENT_CYCLE_MS,
+  BG_COLOR,
+  DEFAULT_NODE_COLOR,
+  DIMMED_NODE_COLOR,
+  EDGE_DEFAULT,
+  EDGE_HOVER,
+  GOLDEN_ANGLE,
+  LABEL_COLOR,
+  MAX_ANIMATED_NODES,
+  getCategoryColor,
+  hash01,
+  prefersReducedMotion,
+  type GraphViewProps,
+  type TooltipNode,
+} from "@/components/graph-view-shared";
 import { fetchJson, isSetupRequiredResponse } from "../api";
 import { RouteErrorBoundary } from "../route-error-boundary";
 
-/* ── Colors ── */
+const GRAPH_MODE_STORAGE_KEY = "wikios-graph-mode";
 
-const DEFAULT_NODE_COLOR = "#c4c0cc";
-const EDGE_DEFAULT = "#ece5d2";
-const EDGE_HOVER = "rgba(132, 185, 201, 0.85)";
-const LABEL_COLOR = "#6b6673";
-const BG_COLOR = "#faf7f3";
-
-function getCategoryColor(
-  categories: string[],
-  aliases: Record<string, TopicAliasConfig>,
-): string {
-  for (const cat of categories) {
-    return getTopicColor(cat, aliases);
-  }
-  return DEFAULT_NODE_COLOR;
-}
+type GraphMode = "2d" | "3d";
 
 /* ── Graph building ── */
 
@@ -82,44 +86,412 @@ function runLayout(graph: Graph) {
   });
 }
 
+/* ── Ambient motion ── */
+
+const ENTRANCE_MS = 1400;
+const ENTRANCE_STAGGER_MS = 600;
+const ENTRANCE_COLLAPSE = 0.3;
+// Past the entrance, drift is slow enough that 30fps looks identical and
+// halves the per-frame reprocess cost.
+const AMBIENT_FRAME_MS = 1000 / 30;
+// Nodes big enough to carry a label (labelRenderedSizeThreshold) stay
+// anchored at base so sigma's per-cell label selection never flickers.
+const LABEL_ANCHOR_SIZE = 6;
+
+function easeOutCubic(t: number) {
+  return 1 - (1 - t) ** 3;
+}
+
+interface AnimatedNodeMotion {
+  baseX: number;
+  baseY: number;
+  spawnX: number;
+  spawnY: number;
+  delay: number;
+  phaseX: number;
+  phaseY: number;
+  freqX: number;
+  freqY: number;
+  amplitude: number;
+  pausedAt: number | null;
+  timeShift: number;
+}
+
+export interface GraphAnimator {
+  stop(): void;
+  settle(): void;
+  holdNode(node: string): void;
+  releaseNode(): void;
+  getBasePosition(node: string): { x: number; y: number } | null;
+}
+
+function createGraphAnimator(
+  graph: Graph,
+  sigma: SigmaLib,
+  { entrance }: { entrance: boolean },
+): GraphAnimator | null {
+  if (graph.order === 0 || graph.order > MAX_ANIMATED_NODES) {
+    return null;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let sumX = 0;
+  let sumY = 0;
+
+  graph.forEachNode((_node, attrs) => {
+    minX = Math.min(minX, attrs.x);
+    maxX = Math.max(maxX, attrs.x);
+    minY = Math.min(minY, attrs.y);
+    maxY = Math.max(maxY, attrs.y);
+    sumX += attrs.x;
+    sumY += attrs.y;
+  });
+
+  const centerX = sumX / graph.order;
+  const centerY = sumY / graph.order;
+  const extent = Math.max(maxX - minX, maxY - minY) || 1;
+  const amplitude = extent * AMBIENT_AMPLITUDE_RATIO;
+  const baseFreq = (Math.PI * 2) / AMBIENT_CYCLE_MS;
+  const collapse = entrance ? ENTRANCE_COLLAPSE : 1;
+
+  const motions = new Map<string, AnimatedNodeMotion>();
+  let index = 0;
+  graph.forEachNode((node, attrs) => {
+    const phase = index * GOLDEN_ANGLE;
+    motions.set(node, {
+      baseX: attrs.x,
+      baseY: attrs.y,
+      spawnX: centerX + (attrs.x - centerX) * collapse,
+      spawnY: centerY + (attrs.y - centerY) * collapse,
+      delay: hash01(index) * ENTRANCE_STAGGER_MS,
+      phaseX: phase,
+      phaseY: phase * 1.7 + 1.3,
+      freqX: baseFreq * (0.75 + 0.5 * hash01(index + 0.1)),
+      freqY: baseFreq * (0.85 + 0.5 * hash01(index + 0.2)),
+      amplitude:
+        (attrs.size ?? 0) >= LABEL_ANCHOR_SIZE
+          ? 0
+          : amplitude * (0.7 + 0.6 * hash01(index + 0.3)),
+      pausedAt: null,
+      timeShift: 0,
+    });
+    index += 1;
+  });
+
+  // Freeze the render frame on the settled layout so the camera does not
+  // re-fit while nodes are collapsed at spawn or drifting around base.
+  sigma.setCustomBBox(sigma.getBBox());
+
+  const startedAt = performance.now();
+  const entranceSpan = entrance ? ENTRANCE_MS + ENTRANCE_STAGGER_MS : 0;
+  let heldNode: string | null = null;
+
+  const applyFrame = (now: number) => {
+    const elapsed = now - startedAt;
+    graph.updateEachNodeAttributes(
+      (node, attrs) => {
+        const motion = motions.get(node);
+        if (!motion) {
+          return attrs;
+        }
+        // A held node's clock stands still, so it stays put under the cursor
+        // and resumes seamlessly on release.
+        const effective = motion.pausedAt ?? elapsed - motion.timeShift;
+        const settle = entrance
+          ? easeOutCubic(Math.min(Math.max((effective - motion.delay) / ENTRANCE_MS, 0), 1))
+          : 1;
+        const driftX =
+          Math.sin(effective * motion.freqX + motion.phaseX) * motion.amplitude * settle;
+        const driftY =
+          Math.cos(effective * motion.freqY + motion.phaseY) * motion.amplitude * settle;
+        attrs.x = motion.spawnX + (motion.baseX - motion.spawnX) * settle + driftX;
+        attrs.y = motion.spawnY + (motion.baseY - motion.spawnY) * settle + driftY;
+        return attrs;
+      },
+      { attributes: ["x", "y"] },
+    );
+  };
+
+  if (entrance) {
+    // Collapse toward the center before the first paint; the entrance then
+    // eases every node back out to its settled position.
+    applyFrame(startedAt);
+  }
+
+  let lastApplied = -Infinity;
+  let rafId = requestAnimationFrame(function tick(now) {
+    if (now - startedAt <= entranceSpan || now - lastApplied >= AMBIENT_FRAME_MS) {
+      lastApplied = now;
+      applyFrame(now);
+    }
+    rafId = requestAnimationFrame(tick);
+  });
+
+  return {
+    stop() {
+      cancelAnimationFrame(rafId);
+    },
+    settle() {
+      graph.updateEachNodeAttributes(
+        (node, attrs) => {
+          const motion = motions.get(node);
+          if (motion) {
+            attrs.x = motion.baseX;
+            attrs.y = motion.baseY;
+          }
+          return attrs;
+        },
+        { attributes: ["x", "y"] },
+      );
+    },
+    holdNode(node: string) {
+      this.releaseNode();
+      const motion = motions.get(node);
+      if (motion) {
+        motion.pausedAt = performance.now() - startedAt - motion.timeShift;
+        heldNode = node;
+      }
+    },
+    releaseNode() {
+      if (heldNode === null) {
+        return;
+      }
+      const motion = motions.get(heldNode);
+      if (motion && motion.pausedAt !== null) {
+        motion.timeShift = performance.now() - startedAt - motion.pausedAt;
+        motion.pausedAt = null;
+      }
+      heldNode = null;
+    },
+    getBasePosition(node: string) {
+      const motion = motions.get(node);
+      return motion ? { x: motion.baseX, y: motion.baseY } : null;
+    },
+  };
+}
+
+/* ── 2D view (sigma.js) ── */
+
+function Graph2DView({
+  data,
+  aliases,
+  focusedSlug,
+  motionEnabled,
+  onFocusNode,
+  onClearFocus,
+  onNavigateNode,
+  onHoverNode,
+  flyToRef,
+}: GraphViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sigmaRef = useRef<SigmaLib | null>(null);
+  const graphRef = useRef<Graph | null>(null);
+  const animatorRef = useRef<GraphAnimator | null>(null);
+  const hoveredRef = useRef<string | null>(null);
+  const focusedRef = useRef<string | null>(focusedSlug);
+  const motionEnabledRef = useRef(motionEnabled);
+
+  const callbacksRef = useRef({ onFocusNode, onClearFocus, onNavigateNode, onHoverNode });
+  useEffect(() => {
+    callbacksRef.current = { onFocusNode, onClearFocus, onNavigateNode, onHoverNode };
+  });
+
+  useEffect(() => {
+    focusedRef.current = focusedSlug;
+    sigmaRef.current?.refresh();
+  }, [focusedSlug]);
+
+  // Pause/resume ambient motion without tearing down the sigma instance.
+  useEffect(() => {
+    motionEnabledRef.current = motionEnabled;
+    const sigma = sigmaRef.current;
+    const graph = graphRef.current;
+    if (!sigma || !graph) return;
+
+    if (motionEnabled) {
+      if (!animatorRef.current) {
+        animatorRef.current = createGraphAnimator(graph, sigma, { entrance: false });
+      }
+    } else if (animatorRef.current) {
+      animatorRef.current.stop();
+      animatorRef.current.settle();
+      animatorRef.current = null;
+    }
+  }, [motionEnabled]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const graph = buildGraph(data, aliases);
+    runLayout(graph);
+
+    const sigma = new SigmaLib(graph, containerRef.current, {
+      allowInvalidContainer: true,
+      renderLabels: true,
+      renderEdgeLabels: false,
+      labelColor: { color: LABEL_COLOR },
+      labelFont: '"Urbanist", -apple-system, BlinkMacSystemFont, sans-serif',
+      labelSize: 11,
+      labelWeight: "500",
+      labelRenderedSizeThreshold: 6,
+      defaultEdgeColor: EDGE_DEFAULT,
+      defaultEdgeType: "line",
+      defaultNodeColor: DEFAULT_NODE_COLOR,
+      stagePadding: 60,
+      edgeReducer(edge, edgeData) {
+        const active = focusedRef.current ?? hoveredRef.current;
+        const res = { ...edgeData };
+
+        if (active) {
+          const src = graph.source(edge);
+          const tgt = graph.target(edge);
+          if (src === active || tgt === active) {
+            res.color = EDGE_HOVER;
+            res.size = 1;
+          } else {
+            res.hidden = true;
+          }
+        }
+        return res;
+      },
+      nodeReducer(node, nodeData) {
+        const active = focusedRef.current ?? hoveredRef.current;
+        const res = { ...nodeData };
+
+        if (active) {
+          const isActive = node === active;
+          const isNeighbor = graph.hasEdge(active, node) || graph.hasEdge(node, active);
+
+          if (isActive) {
+            res.highlighted = true;
+            res.zIndex = 2;
+            res.size = (res.size ?? 4) * 1.3;
+          } else if (isNeighbor) {
+            res.zIndex = 1;
+            if (focusedRef.current) res.forceLabel = true;
+          } else {
+            res.color = DIMMED_NODE_COLOR;
+            res.label = "";
+            res.zIndex = 0;
+          }
+        }
+
+        return res;
+      },
+    });
+
+    sigmaRef.current = sigma;
+    graphRef.current = graph;
+
+    if (motionEnabledRef.current) {
+      animatorRef.current = createGraphAnimator(graph, sigma, { entrance: true });
+    }
+
+    // Aim the camera at the node's settled base position: during the entrance
+    // the live position is still in flight, and Camera.animate tweens toward a
+    // fixed snapshot, so targeting the live position can miss entirely.
+    const focusCamera = (slug: string, ratio: number, duration: number) => {
+      const base = animatorRef.current?.getBasePosition(slug);
+      const target = base
+        ? sigma.viewportToFramedGraph(sigma.graphToViewport(base))
+        : sigma.getNodeDisplayData(slug);
+      if (target) {
+        sigma.getCamera().animate({ x: target.x, y: target.y, ratio }, { duration });
+      }
+    };
+
+    sigma.on("enterNode", ({ node }) => {
+      hoveredRef.current = node;
+      // Hold the hovered node still so the tooltip stays truthful and clicks
+      // land even if the cursor rests in place.
+      animatorRef.current?.holdNode(node);
+      sigma.refresh();
+      const attrs = graph.getNodeAttributes(node);
+      callbacksRef.current.onHoverNode({
+        label: attrs.label,
+        categories: attrs.categories ?? [],
+        backlinkCount: attrs.backlinkCount ?? 0,
+        wordCount: attrs.wordCount ?? 0,
+      });
+      containerRef.current!.style.cursor = "pointer";
+    });
+
+    sigma.on("leaveNode", () => {
+      hoveredRef.current = null;
+      animatorRef.current?.releaseNode();
+      sigma.refresh();
+      callbacksRef.current.onHoverNode(null);
+      containerRef.current!.style.cursor = "default";
+    });
+
+    sigma.on("clickNode", ({ node }) => {
+      const focused = focusedRef.current;
+
+      if (focused === node || (focused && (graph.hasEdge(focused, node) || graph.hasEdge(node, focused)))) {
+        callbacksRef.current.onNavigateNode(node);
+        return;
+      }
+
+      focusedRef.current = node;
+      callbacksRef.current.onFocusNode(node);
+      sigma.refresh();
+      focusCamera(node, 0.5, 300);
+    });
+
+    sigma.on("clickStage", () => {
+      if (focusedRef.current) {
+        focusedRef.current = null;
+        callbacksRef.current.onClearFocus();
+        sigma.refresh();
+      }
+    });
+
+    flyToRef.current = (slug, zoomRatio = 0.5) => {
+      focusCamera(slug, zoomRatio, 400);
+    };
+
+    return () => {
+      if (flyToRef.current) {
+        flyToRef.current = null;
+      }
+      animatorRef.current?.stop();
+      animatorRef.current = null;
+      sigma.kill();
+      sigmaRef.current = null;
+      graphRef.current = null;
+    };
+  }, [aliases, data, flyToRef]);
+
+  return <div ref={containerRef} className="h-full w-full" />;
+}
+
 /* ── Search ── */
 
 function GraphSearch({
-  graph,
-  sigmaRef,
+  nodes,
   onSelect,
 }: {
-  graph: Graph | null;
-  sigmaRef: React.RefObject<SigmaLib | null>;
+  nodes: { slug: string; label: string }[];
   onSelect: (slug: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ slug: string; label: string }[]>([]);
 
   useEffect(() => {
-    if (!graph || !query.trim()) {
+    if (!query.trim()) {
       setResults([]);
       return;
     }
     const q = query.toLowerCase();
-    const matched: { slug: string; label: string }[] = [];
-    graph.forEachNode((slug, attrs) => {
-      if (attrs.label?.toLowerCase().includes(q)) {
-        matched.push({ slug, label: attrs.label });
-      }
-    });
+    const matched = nodes.filter((n) => n.label.toLowerCase().includes(q));
     matched.sort((a, b) => a.label.localeCompare(b.label));
     setResults(matched.slice(0, 8));
-  }, [graph, query]);
+  }, [nodes, query]);
 
   const handleSelect = (slug: string) => {
-    const sigma = sigmaRef.current;
-    if (sigma) {
-      const pos = sigma.getNodeDisplayData(slug);
-      if (pos) {
-        sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.3 }, { duration: 400 });
-      }
-    }
     onSelect(slug);
     setQuery("");
     setResults([]);
@@ -278,7 +650,7 @@ function NodeTooltip({
   position,
   aliases,
 }: {
-  node: { label: string; categories: string[]; backlinkCount: number; wordCount: number } | null;
+  node: TooltipNode | null;
   position: { x: number; y: number };
   aliases: Record<string, TopicAliasConfig>;
 }) {
@@ -325,22 +697,38 @@ export async function loader() {
   }
 }
 
+function loadInitialMode(): GraphMode {
+  try {
+    return localStorage.getItem(GRAPH_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d";
+  } catch {
+    return "2d";
+  }
+}
+
 export function Component() {
   const data = useLoaderData() as GraphData;
   const config = useWikiConfig();
   const navigate = useNavigate();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const sigmaRef = useRef<SigmaLib | null>(null);
-  const graphRef = useRef<Graph | null>(null);
-  const hoveredRef = useRef<string | null>(null);
-  const selectedRef = useRef<string | null>(null);
-  const focusedRef = useRef<string | null>(null);
+  const [mode, setMode] = useState<GraphMode>(loadInitialMode);
+  const [motionEnabled, setMotionEnabled] = useState(() => !prefersReducedMotion());
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{
-    node: { label: string; categories: string[]; backlinkCount: number; wordCount: number };
+    node: TooltipNode;
     position: { x: number; y: number };
   } | null>(null);
-  const [graphReady, setGraphReady] = useState(false);
+  const mousePosRef = useRef({ x: 0, y: 0 });
+  const flyToRef = useRef<((slug: string, zoomRatio?: number) => void) | null>(null);
+
+  // The ambient motion runs indefinitely, so honor mid-session changes to the
+  // OS "reduce motion" preference, not just its value at mount.
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => {
+      if (mq.matches) setMotionEnabled(false);
+    };
+    mq.addEventListener("change", handleChange);
+    return () => mq.removeEventListener("change", handleChange);
+  }, []);
 
   // Build a lookup map for node data
   const nodeMap = useRef(new Map<string, GraphNode>());
@@ -350,6 +738,11 @@ export function Component() {
     nodeMap.current = map;
   }, [data]);
 
+  const searchNodes = useMemo(
+    () => data.nodes.map((n) => ({ slug: n.slug, label: n.title })),
+    [data],
+  );
+
   const focusedNode = focusedSlug ? nodeMap.current.get(focusedSlug) ?? null : null;
   const focusedNeighbors = focusedNode
     ? focusedNode.neighbors
@@ -358,180 +751,71 @@ export function Component() {
         .sort((a, b) => b.backlinkCount - a.backlinkCount)
     : [];
 
-  const handleSearchSelect = useCallback((slug: string) => {
-    focusedRef.current = slug;
-    setFocusedSlug(slug);
-    sigmaRef.current?.refresh();
-  }, []);
-
-  const handleInfoClose = useCallback(() => {
-    focusedRef.current = null;
+  const handleModeChange = useCallback((next: GraphMode) => {
+    setMode(next);
     setFocusedSlug(null);
-    sigmaRef.current?.refresh();
-  }, []);
-
-  const handleInfoNeighborClick = useCallback((slug: string) => {
-    focusedRef.current = slug;
-    setFocusedSlug(slug);
-    sigmaRef.current?.refresh();
-    const pos = sigmaRef.current?.getNodeDisplayData(slug);
-    if (pos) {
-      sigmaRef.current?.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.5 }, { duration: 300 });
+    setTooltip(null);
+    try {
+      localStorage.setItem(GRAPH_MODE_STORAGE_KEY, next);
+    } catch {
+      // Persisting the preference is best-effort only.
     }
   }, []);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const graph = buildGraph(data, config.categories.aliases);
-    runLayout(graph);
-    graphRef.current = graph;
-
-    const sigma = new SigmaLib(graph, containerRef.current, {
-      allowInvalidContainer: true,
-      renderLabels: true,
-      renderEdgeLabels: false,
-      labelColor: { color: LABEL_COLOR },
-      labelFont: '"Urbanist", -apple-system, BlinkMacSystemFont, sans-serif',
-      labelSize: 11,
-      labelWeight: "500",
-      labelRenderedSizeThreshold: 6,
-      defaultEdgeColor: EDGE_DEFAULT,
-      defaultEdgeType: "line",
-      defaultNodeColor: DEFAULT_NODE_COLOR,
-      stagePadding: 60,
-      edgeReducer(edge, data) {
-        const active = focusedRef.current ?? hoveredRef.current;
-        const res = { ...data };
-
-        if (active) {
-          const src = graph.source(edge);
-          const tgt = graph.target(edge);
-          if (src === active || tgt === active) {
-            res.color = EDGE_HOVER;
-            res.size = 1;
-          } else {
-            res.hidden = true;
-          }
-        }
-        return res;
-      },
-      nodeReducer(node, data) {
-        const active = focusedRef.current ?? hoveredRef.current;
-        const selected = selectedRef.current;
-        const res = { ...data };
-
-        if (active) {
-          const isActive = node === active;
-          const isNeighbor = graph.hasEdge(active, node) || graph.hasEdge(node, active);
-
-          if (isActive) {
-            res.highlighted = true;
-            res.zIndex = 2;
-            res.size = (res.size ?? 4) * 1.3;
-          } else if (isNeighbor) {
-            res.zIndex = 1;
-            if (focusedRef.current) res.forceLabel = true;
-          } else {
-            res.color = "#e8e3d4";
-            res.label = "";
-            res.zIndex = 0;
-          }
-        }
-
-        if (selected === node) {
-          res.highlighted = true;
-          res.zIndex = 3;
-          res.size = (res.size ?? 4) * 1.4;
-        }
-
-        return res;
-      },
-    });
-
-    sigmaRef.current = sigma;
-    setGraphReady(true);
-
-    sigma.on("enterNode", ({ node }) => {
-      hoveredRef.current = node;
-      sigma.refresh();
-      containerRef.current!.style.cursor = "pointer";
-    });
-
-    sigma.on("leaveNode", () => {
-      hoveredRef.current = null;
-      sigma.refresh();
-      setTooltip(null);
-      containerRef.current!.style.cursor = "default";
-    });
-
-    sigma.on("clickNode", ({ node }) => {
-      const focused = focusedRef.current;
-
-      if (focused === node) {
-        navigate(`/wiki/${node}`);
-        return;
-      }
-
-      if (focused && (graph.hasEdge(focused, node) || graph.hasEdge(node, focused))) {
-        navigate(`/wiki/${node}`);
-        return;
-      }
-
-      focusedRef.current = node;
-      setFocusedSlug(node);
-      sigma.refresh();
-
-      const pos = sigma.getNodeDisplayData(node);
-      if (pos) {
-        sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.5 }, { duration: 300 });
-      }
-    });
-
-    sigma.on("clickStage", () => {
-      if (focusedRef.current) {
-        focusedRef.current = null;
-        setFocusedSlug(null);
-        sigma.refresh();
-      }
-    });
-
-    return () => {
-      sigma.kill();
-      sigmaRef.current = null;
-      graphRef.current = null;
-    };
-  }, [config.categories.aliases, data, navigate]);
-
-  // Tooltip tracking
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const hovered = hoveredRef.current;
-      if (!hovered || !graphRef.current || focusedRef.current) {
-        if (!focusedRef.current) setTooltip(null);
-        return;
-      }
-      const attrs = graphRef.current.getNodeAttributes(hovered);
-      setTooltip({
-        node: {
-          label: attrs.label,
-          categories: attrs.categories ?? [],
-          backlinkCount: attrs.backlinkCount ?? 0,
-          wordCount: attrs.wordCount ?? 0,
-        },
-        position: { x: e.clientX, y: e.clientY },
-      });
-    };
-
-    container.addEventListener("mousemove", handleMouseMove);
-    return () => container.removeEventListener("mousemove", handleMouseMove);
+  const handleFocusNode = useCallback((slug: string) => {
+    setFocusedSlug(slug);
   }, []);
 
+  const handleClearFocus = useCallback(() => {
+    setFocusedSlug(null);
+  }, []);
+
+  const handleNavigateNode = useCallback(
+    (slug: string) => {
+      navigate(`/wiki/${slug}`);
+    },
+    [navigate],
+  );
+
+  const handleHoverNode = useCallback((node: TooltipNode | null) => {
+    setTooltip(node ? { node, position: { ...mousePosRef.current } } : null);
+  }, []);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    mousePosRef.current = { x: e.clientX, y: e.clientY };
+    setTooltip((current) =>
+      current ? { ...current, position: { x: e.clientX, y: e.clientY } } : current,
+    );
+  }, []);
+
+  const handleSearchSelect = useCallback((slug: string) => {
+    setFocusedSlug(slug);
+    flyToRef.current?.(slug, 0.3);
+  }, []);
+
+  const handleInfoClose = useCallback(() => {
+    setFocusedSlug(null);
+  }, []);
+
+  const handleInfoNeighborClick = useCallback((slug: string) => {
+    setFocusedSlug(slug);
+    flyToRef.current?.(slug, 0.5);
+  }, []);
+
+  const viewProps: GraphViewProps = {
+    data,
+    aliases: config.categories.aliases,
+    focusedSlug,
+    motionEnabled,
+    onFocusNode: handleFocusNode,
+    onClearFocus: handleClearFocus,
+    onNavigateNode: handleNavigateNode,
+    onHoverNode: handleHoverNode,
+    flyToRef,
+  };
+
   return (
-    <div className="fixed inset-0" style={{ background: BG_COLOR }}>
+    <div className="fixed inset-0" style={{ background: BG_COLOR }} onMouseMove={handleMouseMove}>
       {/* Header */}
       <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-2 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:gap-3 sm:px-6 sm:pb-4 sm:pt-[calc(env(safe-area-inset-top)+1.25rem)]">
         <Link to="/" className="font-display text-lg text-[var(--foreground)] sm:text-xl">
@@ -550,6 +834,23 @@ export function Component() {
             </span>
             <span>{config.navigation.connectionsLabel}</span>
           </span>
+          <div className="surface flex items-center gap-0.5 rounded-full p-1">
+            {(["2d", "3d"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleModeChange(m)}
+                aria-pressed={mode === m}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide transition-colors duration-200 ${
+                  mode === m
+                    ? "bg-[var(--foreground)] text-[var(--background)]"
+                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
           <Link
             to="/"
             className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
@@ -561,11 +862,7 @@ export function Component() {
       </header>
 
       {/* Search */}
-      <GraphSearch
-        graph={graphReady ? graphRef.current : null}
-        sigmaRef={sigmaRef}
-        onSelect={handleSearchSelect}
-      />
+      <GraphSearch nodes={searchNodes} onSelect={handleSearchSelect} />
 
       {/* Tooltip (only when not focused) */}
       {!focusedSlug && (
@@ -583,13 +880,33 @@ export function Component() {
           neighborNodes={focusedNeighbors}
           onClose={handleInfoClose}
           onClickNeighbor={handleInfoNeighborClick}
-          onNavigate={(slug) => navigate(`/wiki/${slug}`)}
+          onNavigate={handleNavigateNode}
           aliases={config.categories.aliases}
         />
       )}
 
-      {/* Sigma canvas */}
-      <div ref={containerRef} className="h-full w-full" />
+      {/* Graph canvas */}
+      {mode === "2d" ? <Graph2DView key="2d" {...viewProps} /> : <Graph3DView key="3d" {...viewProps} />}
+
+      {/* Motion pause/resume (WCAG 2.2.2) */}
+      <button
+        type="button"
+        onClick={() => setMotionEnabled((value) => !value)}
+        aria-label={motionEnabled ? "Pause graph motion" : "Resume graph motion"}
+        title={motionEnabled ? "Pause motion" : "Resume motion"}
+        className="surface absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] right-4 z-10 flex h-10 w-10 items-center justify-center rounded-full text-[var(--foreground)] transition-transform duration-200 active:scale-95"
+      >
+        {motionEnabled ? (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="1.5" width="3" height="9" rx="1" />
+            <rect x="7" y="1.5" width="3" height="9" rx="1" />
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <path d="M3.2 1.9a1 1 0 0 1 1.52-.86l6.4 4.1a1 1 0 0 1 0 1.72l-6.4 4.1a1 1 0 0 1-1.52-.86z" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }
