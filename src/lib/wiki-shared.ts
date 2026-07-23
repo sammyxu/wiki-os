@@ -97,6 +97,43 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export function normalizeRelativePath(value: string) {
+  return value.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+}
+
+export function isIgnoredDirectoryName(name: string) {
+  return name.startsWith("_") || name.startsWith(".");
+}
+
+export function shouldIndexRelativeFile(file: string) {
+  if (!file.endsWith(".md")) {
+    return false;
+  }
+
+  const normalized = normalizeRelativePath(file);
+  if (!normalized) {
+    return false;
+  }
+
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return false;
+  }
+
+  const baseName = parts[parts.length - 1];
+  if (baseName.startsWith("_") || baseName.startsWith(".")) {
+    return false;
+  }
+
+  for (const directory of parts.slice(0, -1)) {
+    if (isIgnoredDirectoryName(directory)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function decodeSlugParts(parts: string[]) {
   return parts.map((part) => decodeURIComponent(part).trim()).filter(Boolean);
 }

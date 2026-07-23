@@ -91,6 +91,14 @@ npm run dev
 
 `dev` runs a split frontend/backend setup for faster iteration.
 
+## Embeddable graph SPA
+
+The interactive 2D/3D graph also ships as a standalone single-page app and an
+embeddable JavaScript library, so you can integrate it into other systems —
+host it anywhere, iframe it, or `mountWikiGraph()` into any element. It can
+even index a markdown folder entirely in the browser. Build with
+`npm run build:spa`; see [spa/README.md](spa/README.md) for details.
+
 ## Folder structure
 
 - `src/client/` contains the React app, routes, and UI components

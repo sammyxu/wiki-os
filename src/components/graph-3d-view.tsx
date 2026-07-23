@@ -30,6 +30,23 @@ const NODE_REL_SIZE = 4;
 const DRIFT_SETTLE_MS = 4500;
 // Gain of the velocity controller steering nodes toward their drift targets.
 const DRIFT_SPRING = 0.03;
+// Layout spread: the d3 defaults (charge -30, link distance 30) pack dense
+// vaults into a tight ball; push much harder and prefer longer edges.
+const CHARGE_STRENGTH = -140;
+const LINK_DISTANCE = 65;
+// Frame the settled constellation tightly so it fills the viewport.
+const ZOOM_FIT_MS = 800;
+const ZOOM_FIT_PADDING = 40;
+// Stretch drift anchors toward the viewport's aspect ratio. The stretch is
+// rotation-symmetric about the auto-rotate (Y) axis — wide screens get an
+// oblate disc (x AND z stretched), portrait gets a prolate cloud (y
+// stretched) — so the silhouette keeps filling the screen at every azimuth.
+const STRETCH_MAX = 1.7;
+// How long the drift spring needs to glide nodes onto the stretched anchors
+// before the camera fit measures the final shape.
+const STRETCH_SETTLE_MS = 1400;
+// Slack applied by the custom camera fit (node radii + drift sway breathing room).
+const FIT_DISTANCE_SLACK = 1.08;
 
 interface Node3D extends NodeObject {
   id: string;
@@ -103,6 +120,7 @@ export function Graph3DView({
     let resizeObserver: ResizeObserver | null = null;
     let resumeTimer: number | null = null;
     let driftTimer: number | null = null;
+    let fitTimer: number | null = null;
     let controlsCleanup: (() => void) | null = null;
 
     const nodeIds = new Set(data.nodes.map((n) => n.slug));
@@ -152,6 +170,15 @@ export function Graph3DView({
       const instance = new TypedForceGraph3D(container, { controlType: "orbit" });
       fg = instance;
       fgRef.current = instance;
+
+      const linkForce = instance.d3Force("link") as
+        | { distance?: (distance: number) => unknown }
+        | undefined;
+      linkForce?.distance?.(LINK_DISTANCE);
+      const chargeForce = instance.d3Force("charge") as
+        | { strength?: (strength: number) => unknown }
+        | undefined;
+      chargeForce?.strength?.(CHARGE_STRENGTH);
 
       // Once the user has moved the camera (orbit/zoom or focusing a node),
       // the delayed engine-stop auto-fit must not yank it away.
@@ -227,6 +254,18 @@ export function Graph3DView({
           );
         if (settled.length === 0) return;
 
+        // Stretch the drift anchors toward the viewport shape (about the
+        // layout center, which the d3 center force keeps at the origin) so the
+        // constellation fills the screen instead of staying spherical. The
+        // stretch must stay symmetric about the Y axis: auto-rotation yaws the
+        // camera around Y, so only x-and-z-together (or y alone) anisotropy
+        // survives every azimuth. The spring glides nodes onto the stretched
+        // anchors smoothly.
+        const rect = containerRef.current?.getBoundingClientRect();
+        const aspect = rect && rect.width > 0 && rect.height > 0 ? rect.width / rect.height : 1;
+        const stretchHorizontal = aspect >= 1 ? Math.min(aspect, STRETCH_MAX) : 1;
+        const stretchVertical = aspect < 1 ? Math.min(1 / aspect, STRETCH_MAX) : 1;
+
         let extent = 0;
         for (const axis of ["x", "y", "z"] as const) {
           let min = Infinity;
@@ -235,7 +274,8 @@ export function Graph3DView({
             min = Math.min(min, n[axis]);
             max = Math.max(max, n[axis]);
           }
-          extent = Math.max(extent, max - min);
+          const stretch = axis === "y" ? stretchVertical : stretchHorizontal;
+          extent = Math.max(extent, (max - min) * stretch);
         }
         // The spring tracks the moving target with lag, so drive it a little
         // harder than the 2D amplitude to land on a similar visible sway.
@@ -247,9 +287,9 @@ export function Graph3DView({
           const phase = i * GOLDEN_ANGLE;
           return {
             node: n,
-            baseX: n.x,
-            baseY: n.y,
-            baseZ: n.z,
+            baseX: n.x * stretchHorizontal,
+            baseY: n.y * stretchVertical,
+            baseZ: n.z * stretchHorizontal,
             freqX: baseFreq * (0.75 + 0.5 * hash01(i + 0.1)),
             freqY: baseFreq * (0.85 + 0.5 * hash01(i + 0.2)),
             freqZ: baseFreq * (0.8 + 0.5 * hash01(i + 0.3)),
@@ -260,11 +300,65 @@ export function Graph3DView({
           };
         });
 
-        // The engine never stops in drift mode, so the initial camera fit
-        // happens here instead of onEngineStop.
+        // The engine never stops in drift mode, so the camera fit happens here
+        // instead of onEngineStop — after the glide onto the stretched anchors.
         if (!cameraTouched) {
-          instance.zoomToFit(800, 90);
+          fitTimer = window.setTimeout(() => {
+            if (!disposed && !cameraTouched) {
+              fitCameraToAnchors();
+            }
+          }, STRETCH_SETTLE_MS);
         }
+      };
+
+      // Custom viewport fit. The library's zoomToFit collapses the bounding
+      // box to a single scalar (max |coordinate| over all axes) and fits it
+      // against the vertical fov, which exactly cancels any horizontal
+      // stretch: backing the camera out by the stretch factor restores the
+      // unstretched angular width while shrinking the height. Instead, fit
+      // the horizontal extent against the horizontal fov and the vertical
+      // extent against the vertical fov, taking the x/z maximum as the
+      // horizontal silhouette (rotation about Y swaps x and z).
+      const fitCameraToAnchors = () => {
+        if (!driftTargets || driftTargets.length === 0) return;
+
+        let halfHorizontal = 0;
+        let halfVertical = 0;
+        for (const target of driftTargets) {
+          halfHorizontal = Math.max(
+            halfHorizontal,
+            Math.abs(target.baseX),
+            Math.abs(target.baseZ),
+          );
+          halfVertical = Math.max(halfVertical, Math.abs(target.baseY));
+        }
+        if (halfHorizontal === 0 && halfVertical === 0) return;
+
+        const camera = instance.camera() as {
+          fov?: number;
+          aspect?: number;
+          position: { x: number; y: number; z: number };
+        };
+        const fovRadians = ((camera.fov ?? 50) * Math.PI) / 180;
+        const tanVertical = Math.tan(fovRadians / 2);
+        const tanHorizontal = tanVertical * (camera.aspect ?? 1);
+        // The near face of the cloud sits up to halfHorizontal in front of the
+        // layout center along the view direction (which stays in the x/z
+        // plane under auto-rotation).
+        const distanceForHeight = halfVertical / tanVertical + halfHorizontal;
+        const distanceForWidth = halfHorizontal / tanHorizontal + halfHorizontal;
+        const distance = Math.max(distanceForHeight, distanceForWidth) * FIT_DISTANCE_SLACK;
+
+        const position = camera.position;
+        const currentDistance = Math.hypot(position.x, position.y, position.z);
+        const scale = currentDistance > 0 ? distance / currentDistance : 1;
+        instance.cameraPosition(
+          currentDistance > 0
+            ? { x: position.x * scale, y: position.y * scale, z: position.z * scale }
+            : { x: 0, y: 0, z: distance },
+          { x: 0, y: 0, z: 0 },
+          ZOOM_FIT_MS,
+        );
       };
 
       instance.backgroundColor(BG_COLOR)
@@ -377,7 +471,7 @@ export function Graph3DView({
       instance.onEngineStop(() => {
         if (!didFitCamera && !cameraTouched) {
           didFitCamera = true;
-          instance.zoomToFit(800, 90);
+          instance.zoomToFit(ZOOM_FIT_MS, ZOOM_FIT_PADDING);
         }
       });
 
@@ -434,6 +528,9 @@ export function Graph3DView({
       }
       if (driftTimer !== null) {
         window.clearTimeout(driftTimer);
+      }
+      if (fitTimer !== null) {
+        window.clearTimeout(fitTimer);
       }
       controlsCleanup?.();
       resizeObserver?.disconnect();

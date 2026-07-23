@@ -10,6 +10,8 @@
     "dev:server": "node ./scripts/dev-server.mjs",
     "build": "npm run build:client && npm run build:server && npm run build:config",
     "build:client": "vite build",
+    "dev:spa": "vite --config spa/vite.config.ts",
+    "build:spa": "vite build --config spa/vite.config.ts && vite build --config spa/vite.lib.config.ts",
     "build:server": "node ./scripts/build-server.mjs",
     "build:config": "node ./scripts/build-config.mjs",
     "serve": "node dist-server/server/server.js",

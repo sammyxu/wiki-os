@@ -1,41 +1,13 @@
 import { promises as fs } from "node:fs";
 
-export function normalizeRelativePath(value: string) {
-  return value.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
-}
-
-export function isIgnoredDirectoryName(name: string) {
-  return name.startsWith("_") || name.startsWith(".");
-}
-
-export function shouldIndexRelativeFile(file: string) {
-  if (!file.endsWith(".md")) {
-    return false;
-  }
-
-  const normalized = normalizeRelativePath(file);
-  if (!normalized) {
-    return false;
-  }
-
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length === 0) {
-    return false;
-  }
-
-  const baseName = parts[parts.length - 1];
-  if (baseName.startsWith("_") || baseName.startsWith(".")) {
-    return false;
-  }
-
-  for (const directory of parts.slice(0, -1)) {
-    if (isIgnoredDirectoryName(directory)) {
-      return false;
-    }
-  }
-
-  return true;
-}
+// Pure path helpers live in wiki-shared so browser code (e.g. the embeddable
+// SPA) can use them without pulling in node:fs; re-exported here so existing
+// server/lib imports keep working.
+export {
+  isIgnoredDirectoryName,
+  normalizeRelativePath,
+  shouldIndexRelativeFile,
+} from "./wiki-shared";
 
 export async function quarantineCorruptIndexFiles(indexDbPath: string, timestampMs: number) {
   const paths = [indexDbPath, `${indexDbPath}-wal`, `${indexDbPath}-shm`];

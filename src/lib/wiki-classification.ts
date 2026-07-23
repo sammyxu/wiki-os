@@ -4,7 +4,7 @@ import {
   normalizeTopicKey,
   type WikiOsConfig,
 } from "./wiki-config";
-import { normalizeRelativePath } from "./wiki-file-utils";
+import { normalizeRelativePath } from "./wiki-shared";
 import {
   slugFromFileName,
   type PersonOverrideValue,
