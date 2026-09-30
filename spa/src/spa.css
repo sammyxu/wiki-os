@@ -2,6 +2,9 @@
 @import url("https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
+/* Class names quoted in the docs aren't used by any component. */
+@source not "../docs";
+
 /* Standalone subset of the WikiOS theme: the variables and utility classes the
    graph explorer relies on, without the article/prose styles. Global rules sit
    in the base layer and the custom classes in the components layer, so Tailwind

@@ -4,6 +4,9 @@
 @import url("https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700;800&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap");
 
+/* Class names quoted in the graph docs aren't used by any component. */
+@source not "../../spa/docs";
+
 :root {
   /* Core surface palette — soft pastel gradient world */
   --background: #faf7f3;
