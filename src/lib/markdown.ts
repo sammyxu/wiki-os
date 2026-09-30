@@ -1,4 +1,4 @@
-import { type WikiHeading, slugFromFileName } from "./wiki-shared";
+import { type WikiHeading, slugFromFileName, wikilinkPage } from "./wiki-shared";
 
 export function wikilinkHref(target: string) {
   return `/wiki/${slugFromFileName(`${target}.md`)}`;
@@ -6,9 +6,11 @@ export function wikilinkHref(target: string) {
 
 export function transformObsidianLinks(markdown: string) {
   return markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, rawTarget: string, rawLabel?: string) => {
-    const target = rawTarget.trim();
     const label = (rawLabel ?? rawTarget).trim();
-    return `[${label}](${wikilinkHref(target)})`;
+    // Heading and block links open their page; a same-page link has none, so
+    // it stays plain text rather than becoming a broken link.
+    const page = wikilinkPage(rawTarget);
+    return page ? `[${label}](${wikilinkHref(page)})` : label;
   });
 }
 

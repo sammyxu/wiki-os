@@ -7,6 +7,7 @@ import {
 import { normalizeRelativePath } from "./wiki-shared";
 import {
   slugFromFileName,
+  wikilinkPage,
   type PersonOverrideValue,
   type SearchMatch,
 } from "./wiki-shared";
@@ -478,7 +479,9 @@ export function extractBacklinkReferences(markdown: string): BacklinkReference[]
   let match: RegExpExecArray | null;
 
   while ((match = linkRegex.exec(markdown)) !== null) {
-    const rawTarget = match[1].trim().replace(/^sources\//, "");
+    // Heading and block links count towards their page; same-page links
+    // ([[#Heading]]) have no page and are skipped.
+    const rawTarget = wikilinkPage(match[1]).replace(/^sources\//, "");
     if (!rawTarget) {
       continue;
     }

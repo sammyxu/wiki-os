@@ -328,7 +328,13 @@ export function getTopicAlias(
   topic: string,
   aliases: Record<string, TopicAliasConfig>,
 ) {
-  return aliases[normalizeTopicKey(topic)];
+  const key = normalizeTopicKey(topic);
+  // Indexing renames a topic to its alias's label, so a renamed topic finds
+  // its alias (and keeps its colour and emoji) through that label.
+  return (
+    aliases[key] ??
+    Object.values(aliases).find((alias) => alias.label !== undefined && normalizeTopicKey(alias.label) === key)
+  );
 }
 
 export function getTopicLabel(topic: string, aliases: Record<string, TopicAliasConfig>) {

@@ -154,3 +154,9 @@ export function titleFromFileName(fileName: string) {
   const parts = withoutExtension.split("/");
   return parts[parts.length - 1] ?? withoutExtension;
 }
+
+/** The page a wikilink points to: `note#Heading` and `note#^block` both mean `note`. */
+export function wikilinkPage(target: string) {
+  const hash = target.indexOf("#");
+  return (hash === -1 ? target : target.slice(0, hash)).trim();
+}
