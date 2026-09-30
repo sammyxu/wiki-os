@@ -19,7 +19,7 @@ Transitions work the same way in both views:
 | Idle | Points at a node | **Hovering.** Highlight and tooltip. In 2D, the node also stops drifting |
 | Hovering | Moves off the node | **Idle** |
 | Any | Clicks a node that isn't focused and isn't a neighbour of the focused node | **Focused** on that node: info panel, highlight, camera flight |
-| Focused | Clicks the focused node again, or one of its neighbours | Calls `onOpenArticle(slug)` for the clicked node. Focus doesn't change. Without `onOpenArticle`, nothing happens |
+| Focused | Clicks the focused node again, or one of its neighbours | Calls `onOpenArticle(slug)` for the clicked node, and the focus doesn't change. Without `onOpenArticle`, a click on a neighbour moves the focus to it, with a camera flight; a click on the focused node itself does nothing |
 | Focused | Clicks empty space | **Idle.** The camera stays where it is |
 | Focused | Presses × in the info panel | **Idle.** The camera stays where it is |
 | Any | Picks a search result | **Focused** on that node, with a camera flight |
@@ -29,23 +29,23 @@ Transitions work the same way in both views:
 
 Only a press that barely moves counts as a click, so panning or orbiting doesn't change the focus. In 2D, a mouse press still clicks after up to 2 move events, and a touch still taps after moving less than 10 px. In 3D, any mouse movement, or a touch that moves more than about 1 px, cancels the click.
 
-In 3D, hover is re-tested every 50 ms at the last known pointer position, and that position isn't reset when the pointer leaves the canvas. Nodes that orbit or drift under a still pointer therefore become hovered by themselves. After the pointer moves onto the header, the search box or the panel, nodes passing under its last canvas position keep showing tooltips.
+In 3D, the renderer re-tests hover every 50 ms at the last known pointer position, so nodes that orbit or drift under a resting mouse pointer become hovered by themselves. The view only accepts that hover while a mouse or pen is over the canvas. When the pointer leaves the canvas, for example onto the header, the search box or the panel, the hover clears at once and nothing is hovered again until it returns. Touch never hovers.
 
 ## Mouse and Trackpad
 
 | Action | 2D | 3D |
 | --- | --- | --- |
-| Point at a node | Hover, with a pointer cursor | Hover, with a pointer cursor. The cursor is a pointer over empty space too, because empty space is clickable |
+| Point at a node | Hover, with a pointer cursor | Hover, with a pointer cursor. The cursor is a pointer over links and empty space too, because both are clickable |
 | Click a node | Focus or open (see the state model) | Focus or open |
 | Click empty space | Clear the focus | Clear the focus |
 | Drag empty space | Pan, with a short glide after release | Orbit the camera |
-| Click an edge | Counts as empty space, so it clears the focus | Nothing; links have no click handler, so the focus stays |
+| Click an edge | Counts as empty space, so it clears the focus | Nothing on its own, so the focus stays. It only completes a double-click (see below) |
 | Drag a node | Pans the view; nodes can't be moved | Moves the node. The orbit pauses while you drag, and the simulation is re-energized, so neighbours move too. On release the node is unpinned and the drift pulls it back towards its old place. In a view that mounted with motion off, it stays where you dropped it and nothing else reacts |
 | Right-click | The browser's context menu (sigma doesn't suppress it) | Nothing |
 | Right-drag, or Ctrl, ⌘ or Shift with a left-drag | Right-drag does nothing; with a modifier, a left-drag pans as usual | Pan |
 | Middle-drag | Nothing | Zoom |
 | Scroll wheel or two-finger scroll | Zoom towards the pointer, ×1.7 per step, eased over 250 ms | Zoom towards the orbit target |
-| Double-click | Zoom in ×2.2 towards the pointer over 200 ms. On a node, the first click focuses it, and the zoom then replaces the focus flight, so the camera ends up zoomed towards the pointer rather than centred on the node | Two separate clicks. The first focuses the node and starts a camera flight. The second is tested against the moving scene, so unless the node was already near the centre it usually lands on empty space (clearing the focus) or on another node. It opens the node (if `onOpenArticle` is set) only when the node is still under the pointer |
+| Double-click | Zoom in ×2.2 towards the pointer over 200 ms. On a node, the first click focuses it, and the zoom then replaces the focus flight, so the camera ends up zoomed towards the pointer rather than centred on the node | Opens the node, if `onOpenArticle` is set. The first click focuses the node and starts a camera flight that sweeps it out from under the pointer. So any second click within 400 ms (`DOUBLE_CLICK_MS`) counts as a double-click on that node, wherever it lands: on the node, on another node, on a link or on empty space. Without `onOpenArticle`, the node simply stays focused |
 
 While the pointer is over either view, the wheel zooms the graph instead of scrolling the page.
 
@@ -60,8 +60,7 @@ While the pointer is over either view, the wheel zooms the graph instead of scro
 | Two-finger twist | Rotates the camera (sigma's default touch rotation) | Nothing extra |
 | Double-tap | Zoom in ×2.2 | Two separate taps, with the same outcome as a double-click |
 
-- **Touch triggers hover, badly.** In 2D, sigma treats a finger press as hover: the node is highlighted, stops drifting and gets a tooltip. The tooltip, though, is positioned from mouse events, which sigma suppresses on touch, so it appears at the last mouse position (near the top left if there has been none). Nothing clears the hover when the finger lifts. If you tap a node and then close the panel with ×, that node stays highlighted with its tooltip showing. In 3D, hover is re-tested at the last touch point, so nodes moving through it show tooltips.
-- A port should ignore hover for touch input and rely on taps and the info panel.
+- **Touch doesn't hover.** Taps focus nodes, and the info panel takes the tooltip's place. Sigma treats a finger press as hover, but nothing would end that hover when the finger lifts, and the tooltip is positioned from mouse events that sigma suppresses on touch. So the 2D view ignores hover events that come from touch. The 3D view does the same, using the last pointer's type.
 - Both views set `touch-action: none` on their canvases, so a finger on the graph never scrolls the page.
 
 ## Keyboard
@@ -87,6 +86,7 @@ The graph never changes the URL or navigates by itself. Its only outgoing signal
 | Pressing "Open article →" in the info panel | `onOpenArticle(slug)` |
 | Clicking the focused node again | `onOpenArticle(slug)` |
 | Clicking a neighbour of the focused node on the canvas | `onOpenArticle(neighbourSlug)` |
+| Double-clicking a node in 3D | `onOpenArticle(slug)` |
 
 Each host turns that into something different:
 
@@ -94,7 +94,7 @@ Each host turns that into something different:
 | --- | --- |
 | WikiOS app | Navigates to `/wiki/{slug}` |
 | Standalone SPA, inside an iframe | Posts `{ type: "wiki-graph:open-article", slug }` to the parent window |
-| Standalone SPA, opened directly | Nothing; the button is hidden and the canvas clicks do nothing |
+| Standalone SPA, opened directly | Nothing opens: the button is hidden, and clicking a neighbour moves the focus instead |
 | Library | Calls the `onOpenArticle` option |
 
 Hover and focus changes are internal state, with no callbacks. The [Porting Guide](porting-guide.md#adding-focus-events) shows where to add them.
@@ -103,17 +103,14 @@ Hover and focus changes are internal state, with no callbacks. The [Porting Guid
 
 These follow directly from the current code. Keep or fix them deliberately when porting.
 
-1. **Neighbour clicks do nothing without `onOpenArticle`.** Once a node is focused, clicking one of its neighbours on the canvas is treated as "open", which is a no-op when the host provides no handler. In the standalone SPA, people must click empty space first or use the Connections list. A port without navigation should refocus instead.
-2. **Double-click is unreliable.** In 2D, the zoom overrides the focus flight. In 3D, the second click usually misses the node, which is already moving towards the centre, and clears the focus instead.
+1. **A 2D double-click zooms rather than opens.** The first click focuses the node; the second is sigma's double-click zoom, which overrides the focus flight, so the camera ends up zoomed towards the pointer. In 3D a double-click opens the node.
+2. **3D node clicks can log a library error.** When a press lands on a node, 3d-force-graph's drag handling dispatches a synthetic `pointerup` that OrbitControls can't handle. The console then shows "Cannot read properties of undefined (reading 'x')". The click itself still works.
 3. **Flights reset the zoom.** The 2D zoom ratio is absolute, so clicking a node zooms back out to 0.5 if you had zoomed in further.
 4. **The 2D layout changes on every mount.** Nodes start at random positions, so switching 2D → 3D → 2D, or changing the data, produces a new arrangement.
 5. **The 3D orbit circles a fixed point.** A flight aims the camera at the node's position at that moment. The node keeps drifting away from that point while it is focused, and the orbit keeps circling it even after the focus is cleared, until the next flight.
 6. **Resuming motion in a 3D view that started paused brings back only the orbit.** The drift returns the next time the 3D view mounts.
 7. **On phones, the info panel can hide the focused node.** The camera centres the node, and a full-width panel with a long connections list reaches past the middle of the screen.
 8. **"Connections" means three different numbers.** In the header it counts directed edges, in the tooltip it is the backlink count, and in the info panel's "Connections (N)" it counts distinct neighbours. For scientific-method in the sample vault, the tooltip says 42 and the panel says 22.
-9. **The info panel's close button has no accessible name.** It contains only an icon.
-10. **The search box has no visible focus ring in the SPA and the library.** It uses `outline-none`, and `spa.css` adds no replacement. In the WikiOS app, the global `:focus-visible` rule in `globals.css` draws a 2 px `--ring` outline instead.
-11. **The canvas can't be used with a keyboard or a screen reader.** Offer another way to browse, such as a list of pages, if that matters for your audience.
-12. **Touch hover sticks.** See [Touch](#touch): a tapped node can stay highlighted, with a misplaced tooltip, after its panel is closed.
-13. **3D shows ghost hovers.** Nodes moving under a still pointer, or under the point where the pointer left the canvas, show tooltips by themselves.
-14. **The layout switches with the window, not the embed.** The breakpoint is a media query, so a narrow embed on a wide screen gets the desktop layout, where the search box and the panel can overlap.
+9. **The canvas can't be used with a keyboard or a screen reader.** Offer another way to browse, such as a list of pages, if that matters for your audience.
+10. **3D nodes hover by themselves under a resting pointer.** While the mouse rests on the canvas, nodes that orbit or drift beneath it show their tooltips as they pass.
+11. **The layout switches with the window, not the embed.** The breakpoint is a media query, so a narrow embed on a wide screen gets the desktop layout, where the search box and the panel can overlap.

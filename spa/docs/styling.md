@@ -30,7 +30,7 @@ The canvases never read CSS variables, and the chrome reads only two canvas-side
 | `--teal` | `#85b9c9` | "Open article →" hover background. In the SPA: "Choose a folder" hover, the demo link, the drop zone's drag-over border |
 | `--teal-soft` | `#d4ebf2` | Search result hover background (at 50%). In the SPA: the drop zone's drag-over background (at 40%) |
 | `--peach-soft` | `#fde5d0` | The SPA's error message background |
-| `--ring` | `rgba(132, 185, 201, 0.45)` | The WikiOS app's global focus ring, `:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` in `globals.css`. `spa.css` defines the variable but has no focus rule |
+| `--ring` | `rgba(132, 185, 201, 0.45)` | The focus ring on the search box and the SPA's URL box. In the WikiOS app, also the global rule `:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` in `globals.css` |
 | `--background-tint`, `--card`, `--card-foreground`, `--peach`, `--lavender-soft`, `--primary`, `--primary-foreground`, `--secondary-foreground`, `--muted`, `--accent`, `--accent-foreground` | See [spa.css](../src/spa.css) | Defined for the wider WikiOS theme; the graph doesn't use them |
 
 ### Typography
@@ -140,14 +140,14 @@ Each entry lists the classes from the source, then what they resolve to.
 - **Classes:** `absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-2 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:gap-3 sm:px-6 sm:pb-4 sm:pt-[calc(env(safe-area-inset-top)+1.25rem)]`.
 - **Desktop:** padding 20 px 24 px 16 px (plus the top safe-area inset), gap 12 px. It is 74 px tall with the SPA's content. It has no background and floats over the canvas.
 - **Phone:** padding 24 px 16 px 12 px, gap 8 px.
-- **Left group:** `min-w-0`, so a block-level title can shrink and truncate. The SPA's and the library's title is an inline `span`, and `truncate` doesn't apply to inline boxes. A long title therefore stays on one line and runs under the right-hand controls; adding `block` to the span would make it truncate.
+- **Left group:** `min-w-0`, so the title can shrink. The SPA's and the library's title span is `block`, because `truncate` doesn't apply to inline boxes. A long title therefore ends in an ellipsis before the right-hand controls.
 - **Right group:** `flex items-center gap-1.5 sm:gap-2.5` (6 px, then 10 px from 640 px).
 
 ### Header Slot Content
 
 | Host | `headerStart` | `headerEnd` |
 | --- | --- | --- |
-| SPA | `font-display truncate text-lg text-[var(--foreground)] sm:text-xl`: Playfair 300 at 18 px, 20 px from 640 px | "Change data": `surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4`, 38 px tall, padding 8 × 16 px, 14 px weight 500. The press to 96% is instant (see [Transitions and Feedback](#transitions-and-feedback)) |
+| SPA | `font-display block truncate text-lg text-[var(--foreground)] sm:text-xl`: Playfair 300 at 18 px, 20 px from 640 px | "Change data": `surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4`, 38 px tall, padding 8 × 16 px, 14 px weight 500. Shrinks to 96% while pressed, over 200 ms |
 | Library | The `title` option with the same classes as the SPA's title | Nothing |
 | WikiOS | Site title link: `font-display text-lg text-[var(--foreground)] sm:text-xl` | "Back to wiki" link with the SPA button's classes, reading "Back" below 640 px |
 
@@ -168,7 +168,7 @@ Each entry lists the classes from the source, then what they resolve to.
 ### Search
 
 - **Wrapper:** `absolute left-4 right-4 z-10 sm:right-auto sm:w-64`, with an inline `top: calc(env(safe-area-inset-top) + 4.75rem)` (76 px). On desktop it is 256 px wide at 16 px from the left. On phones it spans the width minus 16 px on each side.
-- **Input:** `surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]`. 42 px tall, padding 10 × 16 px, 14/20 px text, placeholder in `#6b6673`. In the SPA and the library it shows no focus outline. In the WikiOS app, the global `:focus-visible` rule (unlayered, so it beats `outline-none`) draws a 2 px `--ring` outline, offset 2 px.
+- **Input:** `surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-[var(--ring)]`. 42 px tall, padding 10 × 16 px, 14/20 px text, placeholder in `#6b6673`. While focused, it shows a 2 px solid `--ring` outline, offset 2 px; text inputs match `:focus-visible` however they are focused. It is the same ring the WikiOS app's global rule draws.
 - **Results panel:** `surface-raised mt-2 overflow-hidden rounded-2xl`: 8 px below the input, 16 px radius.
 - **Result rows:** `block w-full px-4 py-2 text-left text-sm font-display text-[var(--foreground)] transition-colors hover:bg-[var(--teal-soft)]/50`. 36 px tall, padding 8 × 16 px, Playfair 300 at 14/20 px. On hover, the background becomes `#d4ebf2` at 50% (mixed in OKLab where supported), easing over 150 ms.
 
@@ -190,9 +190,9 @@ Each entry lists the classes from the source, then what they resolve to.
   - **Meta row:** `mt-1.5 flex items-center gap-2`, 6 px below, gap 8 px.
   - **Category:** `flex items-center gap-1.5`. The dot matches the tooltip's, with the `0 0 8px {colour}80` glow. The label is `text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]`: 10/15 px, weight 600, uppercase, letter spacing 0.5 px.
   - **Counts:** `text-[10px] text-[var(--muted-foreground)]`.
-  - **Close button:** `shrink-0 rounded-full p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]`. 22 px square with padding 4 px, around a 14 px × icon. On hover, it gets a `#f1ede6` circle and dark icon.
+  - **Close button:** `shrink-0 rounded-full p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]`, with `aria-label="Close"`. 22 px square with padding 4 px, around a 14 px × icon. On hover, it gets a `#f1ede6` circle and dark icon.
 - **Summary section:** `border-b border-[var(--border)] px-5 py-3`, padding 12 × 20 px. The text is `line-clamp-3 text-[0.8rem] leading-relaxed text-[var(--muted-foreground)]`: 12.8/20.8 px, at most three lines, then an ellipsis.
-- **Open-article section:** `border-b border-[var(--border)] px-5 py-3`. The button is `w-full rounded-full bg-[var(--foreground)] px-4 py-2 text-xs font-semibold text-[var(--background)] transition-[background,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[var(--teal)] active:scale-[0.97]`. Full width, 32 px tall, 12/16 px weight 600, light text on ink. It eases to teal on hover over 200 ms. It shrinks to 97% while pressed, but instantly, because the transition doesn't cover the `scale` property (see [Transitions and Feedback](#transitions-and-feedback)).
+- **Open-article section:** `border-b border-[var(--border)] px-5 py-3`. The button is `w-full rounded-full bg-[var(--foreground)] px-4 py-2 text-xs font-semibold text-[var(--background)] transition-[background,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[var(--teal)] active:scale-[0.97]`. Full width, 32 px tall, 12/16 px weight 600, light text on ink. It eases to teal on hover and shrinks to 97% while pressed, both over 200 ms. Tailwind 4 scales with the separate `scale` property, which is why the transition lists `scale` rather than `transform`.
 - **Connections list:** `max-h-56 overflow-y-auto` (at most 224 px, then it scrolls).
   - **Heading:** `px-5 pb-1.5 pt-3 text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]`. Padding 12 px 20 px 6 px, 10.4/15.6 px, weight 600, uppercase, letter spacing 1.66 px.
   - **Rows:** `group flex w-full items-center gap-2.5 px-5 py-2 text-left transition-colors hover:bg-white/60`. 36 px tall, padding 8 × 20 px, gap 10 px, 60% white on hover.
@@ -255,7 +255,7 @@ On phones, the info panel (20) sits over the search box (10) at the same positio
 | Host buttons | Padding 8 × 14 px | Padding 8 × 16 px |
 
 - **Viewport, not container.** The breakpoint is a media query on the browser window's width. A narrow embed on a wide screen gets the "From 640 px" layout, and there the 16rem search box and the 20rem info panel can overlap. Container queries would make a port follow the embed's own width.
-- **Safe areas.** Only the top and bottom insets are used, and browsers only report them when the page's viewport tag includes `viewport-fit=cover`. The WikiOS app sets it; the SPA's `index.html` doesn't, so its insets are zero.
+- **Safe areas.** Only the top and bottom insets are used, and browsers only report them when the page's viewport tag includes `viewport-fit=cover`. The WikiOS app and the SPA set it; a page hosting the library has to set it itself.
 - **Hover.** Hover styles only apply on devices that can hover: Tailwind 4 wraps every `hover:` utility in `@media (hover: hover)`.
 
 ## Transitions and Feedback
@@ -265,11 +265,11 @@ On phones, the info panel (20) sits over the search box (10) at the same positio
 | Mode buttons | Colours | 200 ms | Tailwind default | Text darkens on hover |
 | Search result rows | Colours | 150 ms | Tailwind default | Teal tint on hover |
 | Close button | Colours | 150 ms | Tailwind default | Grey circle on hover |
-| "Open article →" | Background (the list names `transform`, but the press uses `scale`) | 200 ms | `cubic-bezier(0.23, 1, 0.32, 1)` | Teal on hover (eased); 97% while pressed (instant) |
+| "Open article →" | Background, scale | 200 ms | `cubic-bezier(0.23, 1, 0.32, 1)` | Teal on hover, 97% while pressed |
 | Connection rows | Colours | 150 ms | Tailwind default | White tint on hover |
 | Connection dots | All | 200 ms | Tailwind default | 125% while the row is hovered |
 | Motion button | Transform | 200 ms | Tailwind default | 95% while pressed |
-| Host buttons (SPA, WikiOS) | Nothing in practice (the list names `transform`, but the press uses `scale`) | 200 ms | `cubic-bezier(0.23, 1, 0.32, 1)` | 96% while pressed (instant) |
+| Host buttons (SPA, WikiOS) | Scale | 200 ms | `cubic-bezier(0.23, 1, 0.32, 1)` | 96% while pressed |
 
 ## 2D Canvas
 
@@ -296,14 +296,14 @@ On phones, the info panel (20) sits over the search box (10) at the same positio
 | Links | 1 px GL lines (`LineBasicMaterial`) in `#d8d2c2` at 35% opacity |
 | Highlighted links | Tubes 1.2 units across (cylinders with 6 radial segments, `MeshLambertMaterial`) in `#84b9c9`, also at 35% opacity. Transparent links don't write depth |
 | Labels | three-spritetext sprites for nodes with 4 or more backlinks: Urbanist at weight 500 in `#6b6673`, 3.4 units tall, no background, border or outline. The texture is drawn at the library's 90 px font size for sharpness. Placed 3.5 units above the sphere, always facing the camera, drawn without depth writes. Opacity 1; while a node is active, 0.15 for every node except the active node and its neighbours |
-| Cursors | 3d-force-graph shows a pointer over nodes and, once something has been hovered, over empty space too (both are clickable); the default cursor over links; and a grab cursor while dragging a node |
+| Cursors | 3d-force-graph shows a pointer over nodes and links and, once something has been hovered, over empty space too, because all three are clickable. It shows a grab cursor while a node is dragged |
 | Library chrome | Its navigation hint is hidden (`showNavInfo(false)`), and its HTML tooltip is switched off (`nodeLabel(() => "")`) |
 
 ## Build Pipeline
 
 - **SPA.** `spa.css` goes through `@tailwindcss/postcss`, set up in the repo-root [postcss.config.mjs](../../postcss.config.mjs). Vite emits it as `dist/spa/assets/index-*.css`, linked from `index.html`.
 - **Library.** [lib.tsx](../src/lib.tsx) imports `./spa.css?inline`, so the same compiled CSS arrives as a string that `ensureStyles()` puts in a `<style data-wiki-graph-styles>` element.
-- **Class detection.** Tailwind scans for class names from the working directory, which is the repo root when you build through npm. The SPA's stylesheet (42 kB) therefore also contains classes used elsewhere in WikiOS, including class names quoted in these docs. In the SPA they cost a little size but style nothing. The library, though, injects the whole stylesheet into its host page, so every generated utility (`hidden`, `flex`, `truncate` and the rest) also applies to any host element with the same class name.
+- **Class detection.** Tailwind scans for class names from the working directory, which is the repo root when you build through npm. The SPA's stylesheet (41 kB) therefore also contains classes used elsewhere in WikiOS. `spa.css` and `globals.css` both have an `@source not` line that skips `spa/docs`, so class names quoted in these docs don't generate CSS. In the SPA the extra classes cost a little size but style nothing. The library, though, injects the whole stylesheet into its host page, so every generated utility (`hidden`, `flex`, `truncate` and the rest) also applies to any host element with the same class name.
 - **Optimization.** Tailwind's Lightning CSS pass (minifying, merging and prefixing) runs only when `NODE_ENV` is `production`. That includes a dev server started from a shell that exports `NODE_ENV=production`.
 
 ### Prefixed Properties
@@ -344,9 +344,9 @@ The standalone SPA's own screens, from [app.tsx](../src/app.tsx):
 | Drop zone | `surface mt-8 rounded-3xl border-2 border-dashed px-6 py-10 text-center transition-colors`, plus `border-transparent`, or `border-[var(--teal)] bg-[var(--teal-soft)]/40` during drag-over | Glass card, 24 px radius, padding 40 × 24 px, with a 2 px dashed border. At rest the border is transparent; during drag-over it turns teal and the card takes a 40% teal-soft tint. This works because `.surface` sits in the components layer (see [Custom Classes](#custom-classes)) |
 | Drop zone title | `text-sm font-medium text-[var(--foreground)]` | 14 px weight 500 |
 | Drop zone hint | `mt-1 text-xs text-[var(--muted-foreground)]` | 12 px, 4 px below |
-| "Choose a folder" | `mt-4 rounded-full bg-[var(--foreground)] px-5 py-2 text-xs font-semibold text-[var(--background)] transition-[background,transform] duration-200 hover:bg-[var(--teal)] active:scale-[0.97]` | 32 px ink pill, 12 px weight 600. Eases to teal on hover; the press to 97% is instant |
+| "Choose a folder" | `mt-4 rounded-full bg-[var(--foreground)] px-5 py-2 text-xs font-semibold text-[var(--background)] transition-[background,scale] duration-200 hover:bg-[var(--teal)] active:scale-[0.97]` | 32 px ink pill, 12 px weight 600. Eases to teal on hover and to 97% while pressed |
 | URL form | `mt-4 flex gap-2` | 16 px below, 8 px gap |
-| URL box | `surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]` | Same as the search box |
+| URL box | `surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-[var(--ring)]` | Same as the search box, focus ring included |
 | "Load" | `surface shrink-0 rounded-full px-4 py-2 text-sm font-medium text-[var(--foreground)] active:scale-[0.96]` | 42 px glass pill, 14 px weight 500; the press to 96% is instant |
 | Demo link | `text-sm font-medium text-[var(--teal)] underline-offset-4 hover:underline` | Teal 14 px weight 500, underlined on hover |
 | Error message | `mt-4 rounded-2xl bg-[var(--peach-soft)] px-4 py-3 text-center text-xs text-[var(--foreground)]` | Peach card, 16 px radius, 12 px text |

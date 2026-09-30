@@ -65,7 +65,7 @@ interface GraphData {
 | Files | Only `.md` files. Files and folders whose names start with `_` or `.` are skipped, so `.obsidian/` is ignored |
 | Slug | The path without `.md`, with each segment URI-encoded: `My Notes/Big Idea.md` becomes `My%20Notes/Big%20Idea` |
 | Title | The file name without `.md`. Frontmatter titles and headings are not used |
-| Links | Wikilinks must use vault-relative targets such as `[[folder/note]]`, and matching is case-sensitive on the encoded path. A leading `sources/` is stripped from every target. `#heading` and `^block` suffixes are kept, so `[[note#Section]]` never resolves. Links to pages that don't exist are dropped |
+| Links | Wikilinks must use vault-relative targets such as `[[folder/note]]`, and matching is case-sensitive on the encoded path. A leading `sources/` is stripped from every target. Heading and block links (`[[note#Section]]`, `[[note#^block]]`) count as links to `note`, and same-page links (`[[#Section]]`) are ignored. In articles, heading links open their page and same-page links render as plain text, because article headings have no anchors. Links to pages that don't exist are dropped |
 | `weight` | How many times the source page links to the target |
 | `backlinkCount` | The sum of those counts over every page that links to this one |
 | `summary` | The first line longer than 30 characters that doesn't start with `#`, `-`, `*`, `[` or `!`, cut to 180 characters plus "..." |
@@ -143,5 +143,5 @@ const aliases = {
 ```
 
 - **Key normalization.** WikiOS normalizes the keys in `wiki-os.config.ts` (and in the `configInput` of `buildGraphDataFromMarkdown`) when it loads them. The React prop and the library option are used exactly as given, so write their keys already normalized: lower case, no leading `#`, and spaces instead of `-` and `_`, such as `machine learning`. A key like `Machine_Learning` silently falls back to the palette.
-- **Labels rename categories.** The renderer reads only `color`, but during indexing an alias `label` renames the category. The colour is then looked up under the new name. With `ml: { label: "Machine Learning", color: "#abcdef" }`, the category becomes "Machine Learning" and takes a palette colour, not `#abcdef`. Repeat the colour under the label's normalized key, as in `"machine learning": { color: "#abcdef" }`.
+- **Labels rename categories.** During indexing, an alias `label` renames the category. The renamed category still finds its alias through that label, so it keeps the alias's colour and emoji. With `ml: { label: "Machine Learning", color: "#abcdef" }`, the category becomes "Machine Learning" and is drawn in `#abcdef`. An alias keyed by the new name itself, such as `"machine learning"`, takes precedence.
 - **Emoji.** `emoji` is used elsewhere in WikiOS, not by the graph.

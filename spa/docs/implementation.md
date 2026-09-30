@@ -73,7 +73,7 @@ The view is keyed by mode, so switching between 2D and 3D unmounts one renderer 
 | `handleModeChange(mode)` | Sets the mode, clears the focus and the tooltip, writes the mode to `localStorage` (errors ignored) |
 | `handleFocusNode(slug)` | Sets `focusedSlug` |
 | `handleClearFocus()` | Clears `focusedSlug` |
-| `handleNavigateNode(slug)` | Calls `onOpenArticle?.(slug)` |
+| `handleNavigateNode(slug)` | Calls `onOpenArticle(slug)`. Without a handler, it focuses that node and flies there with ratio 0.5, unless the node is already focused |
 | `handleHoverNode(node)` | Sets the tooltip at the last pointer position, or clears it |
 | `handleMouseMove(event)` | Stores the pointer position relative to the root's bounding box, and moves a visible tooltip with it |
 | `handleSearchSelect(slug)` | Focuses the node, then `flyToRef.current?.(slug, 0.3)` |
@@ -214,7 +214,7 @@ The animator is created when the view mounts with motion on (with an entrance) a
 
 | Sigma Event | Handler |
 | --- | --- |
-| `enterNode` | Set `hoveredRef`, hold the node, `refresh()`, report the tooltip fields, set the container's cursor to `pointer` |
+| `enterNode` | Ignored when `event.original` is a touch event (nothing would end that hover). Otherwise: set `hoveredRef`, hold the node, `refresh()`, report the tooltip fields, set the container's cursor to `pointer` |
 | `leaveNode` | Clear `hoveredRef`, release the node, `refresh()`, report `null`, reset the cursor |
 | `clickNode` | If the node is focused or adjacent to the focused node, call `onNavigateNode`. Otherwise set `focusedRef`, call `onFocusNode`, `refresh()` and fly the camera (ratio 0.5, 300 ms) |
 | `clickStage` | If something is focused, clear `focusedRef`, call `onClearFocus` and `refresh()` |
@@ -263,7 +263,7 @@ The exported `ForceGraph3D` constructor is typed with the default node and link 
    | `linkColor` | `EDGE_3D_HIGHLIGHT` when touching the active node, else `EDGE_3D_DEFAULT` | Highlighting |
    | `linkWidth` | 1.2 when touching the active node, else 0 | Width 0 draws a 1 px line; anything larger draws a tube |
    | `linkOpacity` | 0.35 | The default is 0.2 |
-   | `onNodeHover`, `onNodeClick`, `onBackgroundClick` | See below | The same rules as 2D |
+   | `onNodeHover`, `onNodeClick`, `onLinkClick`, `onBackgroundClick` | See below | The same rules as 2D, plus double-click handling |
 
 3. **Engine mode,** chosen once:
 
@@ -291,11 +291,14 @@ A sprite is created with `new SpriteText(label)`. It then gets `color = LABEL_CO
 
 | Callback | Handler |
 | --- | --- |
-| `onNodeHover(node)` | Set `hoveredRef`, `refresh()`, report the tooltip fields or `null` |
-| `onNodeClick(node)` | If focused or adjacent to the focused node, call `onNavigateNode`. Otherwise set `focusedRef`, call `onFocusNode`, `refresh()`, mark the camera touched and `flyToNode` |
-| `onBackgroundClick()` | If something is focused, clear it, call `onClearFocus` and `refresh()` |
+| `onNodeHover(node)` | Treat the node as `null` unless a mouse or pen is over the canvas. Then set `hoveredRef`, `refresh()`, and report the tooltip fields or `null`, skipping the work when nothing changes |
+| `onNodeClick(node)` | If this click completes a double-click, call `onNavigateNode` for the first click's node. Otherwise, if the node is focused or adjacent to the focused node, call `onNavigateNode`. Otherwise record the click for double-click detection, set `focusedRef`, call `onFocusNode`, `refresh()`, mark the camera touched and `flyToNode` |
+| `onLinkClick()` | Only completes a double-click; a single link click does nothing |
+| `onBackgroundClick()` | If this click completes a double-click, call `onNavigateNode` for the first click's node. Otherwise, if something is focused, clear it, call `onClearFocus` and `refresh()` |
 
-The renderer only reports a click when the pointer didn't drag, so orbiting never changes the focus.
+- **Clicks.** The renderer only reports a click when the pointer didn't drag, so orbiting never changes the focus.
+- **Double-clicks.** A focusing click is recorded with its time. `takeDoubleClick()` hands back that node if the next click, on anything, comes within `DOUBLE_CLICK_MS` (400 ms). The first click's camera flight sweeps the node out from under the pointer, so the second click can land on another node, a link or empty space.
+- **Pointer tracking.** Capture-phase `pointerdown` and `pointermove` listeners on the container record the pointer's type and that it is over the canvas, and a `pointerleave` listener clears the hover at once. The renderer re-tests hover every 50 ms at the last pointer position, and without these listeners, nodes passing under a finger's last touch point or the point where the mouse left the canvas would show tooltips.
 
 ### Drift, Stretch and Fit
 
@@ -310,7 +313,7 @@ A local `cameraTouched` flag records that a person has taken charge of the camer
 
 ### Cleanup
 
-The cleanup sets `disposed`, clears `flyToRef`, cancels the resume, drift and fit timers, removes the controls listeners, disconnects the `ResizeObserver` and clears the refs. It then calls `fg._destructor()`, and finally `container.replaceChildren()`. The destructor cancels the animation loop, which stops both rendering and the simulation; three-forcegraph has no disposal step for the simulation itself. It then empties the graph data. Finally, through three-render-objects, it empties the scene (disposing geometries, materials and textures) and disposes the OrbitControls, the renderer and the post-processing composer. `renderer.dispose()` doesn't release the WebGL context itself, which is left to garbage collection. `sigma.kill()`, by contrast, does release its contexts.
+The cleanup sets `disposed`, clears `flyToRef`, cancels the resume, drift and fit timers, removes the controls and pointer listeners, disconnects the `ResizeObserver` and clears the refs. It then calls `fg._destructor()`, and finally `container.replaceChildren()`. The destructor cancels the animation loop, which stops both rendering and the simulation; three-forcegraph has no disposal step for the simulation itself. It then empties the graph data. Finally, through three-render-objects, it empties the scene (disposing geometries, materials and textures) and disposes the OrbitControls, the renderer and the post-processing composer. `renderer.dispose()` doesn't release the WebGL context itself, which is left to garbage collection. `sigma.kill()`, by contrast, does release its contexts.
 
 ## Search, Tooltip and Info Panel
 
@@ -357,7 +360,7 @@ The cleanup sets `disposed`, clears `flyToRef`, cancels the resume, drift and fi
 
 1. `normalizeRelativePath` and `shouldIndexRelativeFile` keep files ending in lower-case `.md` whose own name and folder names don't start with `_` or `.`. The SPA's file readers accept `.MD` too, so such files are read and then discarded here.
 2. `titleFromFileName` sets the title, and `parseWikiFrontmatter` splits the frontmatter from the body.
-3. `extractBacklinkReferences` and `aggregateBacklinkReferences` count the wikilinks in the raw body, before `prepareWikiMarkdown` rewrites them.
+3. `extractBacklinkReferences` and `aggregateBacklinkReferences` count the wikilinks in the raw body, before `prepareWikiMarkdown` rewrites them. `wikilinkPage` (in `wiki-shared.ts`) reduces each target to its page, so `[[note#Section]]` and `[[note#^block]]` count for `note`, and same-page `[[#Section]]` links are skipped.
 4. `extractSummary`, a whitespace word count and `deriveCategoryNames` run on the prepared markdown.
 5. Backlink counts are summed per target. Edges are kept only when the target page exists, with the link count as the weight.
 6. Neighbours are collected in both directions.
@@ -383,12 +386,12 @@ The cleanup sets `disposed`, clears `flyToRef`, cancels the resume, drift and fi
 
   | File | Minified | Gzipped |
   | --- | --- | --- |
-  | `dist/spa/assets/index-*.js` (app, React, sigma, graphology) | 399 kB | 114 kB |
-  | `dist/spa/assets/index-*.css` | 42 kB | 8 kB |
+  | `dist/spa/assets/index-*.js` (app, React, sigma, graphology) | 401 kB | 114 kB |
+  | `dist/spa/assets/index-*.css` | 41 kB | 8 kB |
   | `dist/spa/assets/3d-force-graph-*.js` | 813 kB | 232 kB |
   | `dist/spa/assets/three.module-*.js` | 566 kB | 142 kB |
   | `dist/spa/assets/three-spritetext-*.js` | 9 kB | 3 kB |
-  | `dist/spa-lib/wiki-graph.js` (everything) | 3,097 kB | 681 kB |
+  | `dist/spa-lib/wiki-graph.js` (everything) | 3,097 kB | 682 kB |
 
 ## Lifecycle Summary
 
@@ -400,6 +403,7 @@ The cleanup sets `disposed`, clears `flyToRef`, cancels the resume, drift and fi
 | ForceGraph3D instance and render loop | After the 3D modules load | `_destructor()` and `replaceChildren()` in the cleanup |
 | 3D timers (drift, fit, orbit resume) | Setup, `enableDrift`, the controls' `end` event | Cleared in the cleanup |
 | OrbitControls listeners | Setup | Removed in the cleanup |
+| 3D pointer listeners (type, inside and leave tracking) | Setup | Removed in the cleanup |
 | `ResizeObserver` | 3D setup | Disconnected in the cleanup |
 | Label sprite cache | 3D setup | Dropped with the instance |
 | Reduced-motion listener | `GraphExplorer` mount | Removed on unmount |

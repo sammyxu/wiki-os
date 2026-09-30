@@ -80,12 +80,12 @@ Four ways to bring the mind map into another application, from least to most wor
   - `::-webkit-scrollbar { width: 0; height: 0 }`, which hides scrollbars page-wide in Chromium and Safari;
   - preflight's `img, svg, video, canvas { display: block }`, which can break inline icons in the host page;
   - the Google Fonts `@import`s, so the host page requests fonts.googleapis.com, which a strict Content Security Policy blocks;
-  - every utility Tailwind generated, such as `hidden`, `flex` and `truncate`, plus classes for any class-like name found anywhere in the repo, these docs included. They are live in the host page and apply to host elements with the same class names.
+  - every utility Tailwind generated, such as `hidden`, `flex` and `truncate`, plus classes for any class-like name found anywhere in the repo outside `spa/docs`. They are live in the host page and apply to host elements with the same class names.
 
   All of these rules except the `:root` variables sit in Tailwind's cascade layers, so the host page's own unlayered CSS wins over them. That cuts both ways. A host rule such as `button { background: … }` also beats the graph's own layered styles and can restyle its controls.
 
   To contain it, mount the library in an iframe. Alternatively, fork [lib.tsx](../src/lib.tsx) to inject the CSS into a Shadow DOM root and render there (untested; the theme variables would also need a `:host` selector).
-- **One big file.** 3,097 kB (681 kB gzipped), and only partly minified, because Vite doesn't strip whitespace in ES-format library builds. It carries its own copy of React and the entire 3D stack, with no lazy loading.
+- **One big file.** 3,097 kB (682 kB gzipped), and only partly minified, because Vite doesn't strip whitespace in ES-format library builds. It carries its own copy of React and the entire 3D stack, with no lazy loading.
 - **Explicit size.** The element must have a height before mounting.
 
 ## Option C: Copy the React Component
@@ -149,7 +149,7 @@ export function GraphPage({ raw, onOpen }: { raw: GraphData; onOpen: (slug: stri
 2. **Keep `data` and `aliases` stable.** A new object on every render rebuilds the view on every render.
 3. **Render only in the browser.** In a server-rendering framework, load the component on the client only; in Next.js, for example, use `dynamic(…, { ssr: false })` inside a client component.
 4. **Keep the dynamic `import()`s** in `graph-3d-view.tsx`, so the 3D stack (about 1.4 MB) loads only when someone opens 3D.
-5. **Decide on navigation.** Pass `onOpenArticle`, or change the neighbour-click rule so that it refocuses (see [Interactions](interactions.md#known-quirks)).
+5. **Decide on navigation.** Pass `onOpenArticle` to open pages. Without it, the explorer moves the focus when someone clicks a neighbour (see [Interactions](interactions.md#the-state-model)).
 6. **Pick your own `storageKey`,** so your app's 2D/3D choice doesn't collide with other hosts on the same origin.
 7. **Normalize external data** with `normalizeGraphData`, and compute `backlinkCount` from the edges if your data lacks it: `normalizeGraphData` only fills in 0.
 
@@ -237,7 +237,7 @@ An effect catches every path that changes the focus: canvas clicks, search, the 
 | Container resized while motion is paused (2D) | The 2D canvas keeps its old size until the next redraw | Add a `ResizeObserver` that calls `sigma.refresh()`; the 3D view already has one |
 | Graph embedded in a scrolling page | The wheel and touch gestures zoom the graph instead of scrolling the page | Leave scrollable margins, or add a click-to-activate overlay |
 | Narrow embed on a wide screen | The layout breakpoint is a viewport media query (640 px), so the embed gets the desktop layout, where the 16rem search box and the 20rem panel can overlap | Use container queries in the port, keyed to the explorer's own width |
-| Notched phones | Safe-area insets only take effect when the page's viewport tag includes `viewport-fit=cover`; the WikiOS app sets it, `spa/index.html` doesn't | Add `viewport-fit=cover` to the host page's viewport tag |
+| Notched phones | Safe-area insets only take effect when the page's viewport tag includes `viewport-fit=cover`. The WikiOS app and the SPA set it; a page hosting the library may not | Add `viewport-fit=cover` to the host page's viewport tag |
 | Library in a styled host page | Host margins, fonts, colours and scrollbars change | Use an iframe (or try a Shadow DOM fork) |
 | No backlink counts in the data | Tiny nodes. No labels in 3D; in 2D, labels only on the hovered or focused node and its neighbours until zoomed far in | Compute counts from the edges |
 | Many graphs on one page | Browsers limit live WebGL contexts, and each 2D view uses several | Mount one graph at a time |
@@ -260,13 +260,12 @@ An effect catches every path that changes the focus: canvas clicks, search, the 
 Carry these over:
 
 - Motion starts off under `prefers-reduced-motion: reduce`, and the pause button follows WCAG 2.2.2.
-- The mode buttons expose `aria-pressed`, and the motion button has a spoken label.
+- The mode buttons expose `aria-pressed`, and the motion button and the info panel's close button have spoken labels ("Pause graph motion" or "Resume graph motion", and "Close").
+- The search box shows a 2 px `--ring` focus outline instead of the browser's default.
 
-Consider fixing these:
+Consider fixing this:
 
 - The canvas can't be reached or used from the keyboard, and screen readers get nothing from it. Offer a list or search-driven alternative.
-- The info panel's close button has no accessible name. Add `aria-label="Close"`.
-- In the SPA and the library, the search box shows no focus outline (`outline-none`, and no replacement in `spa.css`). The WikiOS app restores one through the global rule `:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px }` in `globals.css`. Port that rule.
 
 ## QA Checklist
 
@@ -274,7 +273,9 @@ Consider fixing these:
 - [ ] 2D: the graph blooms out from the centre on load, small nodes drift, and labelled nodes stay still.
 - [ ] Hovering highlights the node and its neighbours, shows the tooltip, and stops the node drifting.
 - [ ] Clicking a node opens the info panel, flies the camera to it and labels its neighbours.
-- [ ] Clicking the focused node or a neighbour calls `onOpenArticle`, or does nothing without it.
+- [ ] Clicking the focused node or a neighbour calls `onOpenArticle`. Without it, clicking a neighbour moves the focus there.
+- [ ] Double-clicking a node in 3D calls `onOpenArticle`, even when the second click lands after the camera has started moving.
+- [ ] On a touch screen, tapping a node and then closing its panel leaves no highlight or tooltip behind.
 - [ ] Clicking empty space, or ×, clears the focus.
 - [ ] Search is case-insensitive, shows at most 8 results, and flies to the chosen node.
 - [ ] Choosing an entry under Connections refocuses and flies there.

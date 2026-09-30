@@ -77,6 +77,7 @@ y = rest.y + cos(ωy · t + φy) · A
 | Clicking a node | 0.5 | 300 ms |
 | Picking a search result | 0.3 | 400 ms |
 | Clicking an entry under Connections | 0.5 | 400 ms |
+| Clicking a neighbour on the canvas when the host has no `onOpenArticle` | 0.5 | 400 ms |
 
 - The zoom ratio is sigma's camera ratio: 1 fits the whole graph and 0.5 is twice as close. It is absolute, so a click zooms to 0.5 even if you had zoomed in further.
 - Flights aim at the node's rest position, not its live position, so a flight started during the entrance still lands on the node.

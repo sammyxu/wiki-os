@@ -103,7 +103,7 @@ Highlighting follows the active node: the focused node or, when nothing is focus
 
 ## Tooltip
 
-- Appears while the pointer is over a node and nothing is focused. Touch can trigger it too, in the wrong place; see [Interactions](interactions.md#touch).
+- Appears while a mouse or pen is over a node and nothing is focused. Touch doesn't show it; see [Interactions](interactions.md#touch).
 - Shows the title (in Playfair Display), "{backlinks} connections · {words} words", and every category, after a dot in the first category's colour.
 - The "connections" figure in the tooltip is the backlink count, not the number of neighbours.
 - Sits 14 px to the right of and 12 px above the pointer, positioned relative to the explorer's root element, so it works inside any host layout. It ignores pointer events.
@@ -122,7 +122,7 @@ The panel appears while a node is focused.
 
 From top to bottom:
 
-1. The title row. The title comes first, with the first category (after a glowing colour dot) and "{backlinks} · {words}w" beneath it. A close button (×) sits at the right of the row; it clears the focus, and the camera stays where it is.
+1. The title row. The title comes first, with the first category (after a glowing colour dot) and "{backlinks} · {words}w" beneath it. A close button (×, announced to screen readers as "Close") sits at the right of the row. It clears the focus, and the camera stays where it is.
 2. The summary, clamped to three lines.
 3. "Open article →", shown only when the host passes `onOpenArticle`.
 4. "Connections (N)": the neighbours, sorted by backlink count with the highest first, each with its colour dot. N counts distinct neighbours. Clicking one focuses it and flies there. The list scrolls once it is taller than 14rem.
@@ -143,7 +143,7 @@ From top to bottom:
 | Info panel | Full width, covering the search box | 20rem, on the right |
 
 - The breakpoint is the browser window's width (a media query), not the explorer's own width. A narrow embed on a wide screen gets the wide layout, where the 16rem search box and the 20rem panel can overlap.
-- The top offsets and the motion button include the top and bottom safe-area insets. Browsers only report insets when the page's viewport tag includes `viewport-fit=cover`: the WikiOS app sets it, but the SPA's `index.html` doesn't. Left and right insets are never applied.
+- The top offsets and the motion button include the top and bottom safe-area insets. Browsers only report insets when the page's viewport tag includes `viewport-fit=cover`. The WikiOS app and the SPA both set it; a page embedding the library must set it itself. Left and right insets are never applied.
 - On phones, the info panel grows with its content, up to about 28rem, from just below the header. A full panel covers the middle of the screen, which is where the camera has just centred the focused node, as in the screenshot below.
 
 <img src="images/mobile-focus.jpg" alt="A focused node on a 390 px wide phone screen" width="320">
@@ -166,4 +166,4 @@ Storage errors, such as in some private browsing modes, are ignored.
 - **2D rendering:** sigma redraws only when something changes. While drift runs, that is 30 times a second (every frame during the two-second entrance).
 - **3D rendering:** redraws every animation frame while the view is mounted, even when motion is paused.
 - **Large graphs:** above 600 nodes, the 2D entrance and the drift in both views are switched off. The 3D orbit still runs.
-- **Download size:** the 3D libraries load when the 3D view first mounts. In the SPA they are about 1.4 MB minified (about 376 kB gzipped) across three chunks. The initial SPA bundle is about 399 kB minified (114 kB gzipped).
+- **Download size:** the 3D libraries load when the 3D view first mounts. In the SPA they are about 1.4 MB minified (about 376 kB gzipped) across three chunks. The initial SPA bundle is about 401 kB minified (114 kB gzipped).
