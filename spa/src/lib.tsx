@@ -88,7 +88,7 @@ export function mountWikiGraph(
           onOpenArticle={options.onOpenArticle}
           headerStart={
             options.title ? (
-              <span className="font-display truncate text-lg text-[var(--foreground)] sm:text-xl">
+              <span className="font-display block truncate text-lg text-[var(--foreground)] sm:text-xl">
                 {options.title}
               </span>
             ) : undefined

@@ -511,7 +511,7 @@ function GraphSearch({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Find a concept..."
-        className="surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+        className="surface w-full rounded-full px-4 py-2.5 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-[var(--ring)]"
       />
       {results.length > 0 && (
         <div className="surface-raised mt-2 overflow-hidden rounded-2xl">
@@ -582,6 +582,7 @@ function InfoPanel({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="shrink-0 rounded-full p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -611,7 +612,7 @@ function InfoPanel({
           <button
             type="button"
             onClick={() => onNavigate(node.slug)}
-            className="w-full rounded-full bg-[var(--foreground)] px-4 py-2 text-xs font-semibold text-[var(--background)] transition-[background,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[var(--teal)] active:scale-[0.97]"
+            className="w-full rounded-full bg-[var(--foreground)] px-4 py-2 text-xs font-semibold text-[var(--background)] transition-[background,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[var(--teal)] active:scale-[0.97]"
           >
             Open article →
           </button>

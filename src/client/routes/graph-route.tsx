@@ -47,7 +47,7 @@ export function Component() {
         headerEnd={
           <Link
             to="/"
-            className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
+            className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
           >
             <span className="sm:hidden">Back</span>
             <span className="hidden sm:inline">{config.navigation.backToWikiLabel}</span>
