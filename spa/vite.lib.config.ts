@@ -19,6 +19,12 @@ export default defineConfig({
     // exist in host browsers.
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
+  esbuild: {
+    // Match the production React forced above: the JSX transform otherwise
+    // follows the shell's NODE_ENV, and jsxDEV calls crash React's production
+    // runtime when building with NODE_ENV=development or test.
+    jsxDev: false,
+  },
   build: {
     outDir: path.resolve(__dirname, "../dist/spa-lib"),
     emptyOutDir: true,

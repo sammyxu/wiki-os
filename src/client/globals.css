@@ -189,11 +189,13 @@ html {
   padding-bottom: 0.5rem;
 }
 
-/* Glass surface for cards — subtle tint with backdrop blur */
+/* Glass surface for cards — subtle tint with backdrop blur. The prefixed
+   backdrop-filter goes first: the production CSS optimizer keeps only the
+   last of the pair. */
 .surface {
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px) saturate(1.1);
   -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  backdrop-filter: blur(20px) saturate(1.1);
   border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.9) inset,
@@ -202,8 +204,8 @@ html {
 
 .surface-raised {
   background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid rgba(255, 255, 255, 0.9);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 1) inset,
