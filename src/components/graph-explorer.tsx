@@ -407,7 +407,10 @@ function Graph2DView({
       }
     };
 
-    sigma.on("enterNode", ({ node }) => {
+    sigma.on("enterNode", ({ node, event }) => {
+      // Sigma treats a finger press as hover, but nothing ends that hover when
+      // the finger lifts, so touch skips it and relies on taps and the panel.
+      if (event.original.type.startsWith("touch")) return;
       hoveredRef.current = node;
       // Hold the hovered node still so the tooltip stays truthful and clicks
       // land even if the cursor rests in place.
@@ -796,9 +799,18 @@ export function GraphExplorer({
 
   const handleNavigateNode = useCallback(
     (slug: string) => {
-      onOpenArticle?.(slug);
+      if (onOpenArticle) {
+        onOpenArticle(slug);
+        return;
+      }
+      // With nothing to open, a click on a neighbour of the focused node moves
+      // the focus there instead of doing nothing.
+      if (slug !== focusedSlug) {
+        setFocusedSlug(slug);
+        flyToRef.current?.(slug, 0.5);
+      }
     },
-    [onOpenArticle],
+    [focusedSlug, onOpenArticle],
   );
 
   const handleHoverNode = useCallback((node: TooltipNode | null) => {

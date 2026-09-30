@@ -47,6 +47,8 @@ const STRETCH_MAX = 1.7;
 const STRETCH_SETTLE_MS = 1400;
 // Slack applied by the custom camera fit (node radii + drift sway breathing room).
 const FIT_DISTANCE_SLACK = 1.08;
+// Two clicks closer together than this make a double-click.
+const DOUBLE_CLICK_MS = 400;
 
 interface Node3D extends NodeObject {
   id: string;
@@ -122,6 +124,7 @@ export function Graph3DView({
     let driftTimer: number | null = null;
     let fitTimer: number | null = null;
     let controlsCleanup: (() => void) | null = null;
+    let pointerCleanup: (() => void) | null = null;
 
     const nodeIds = new Set(data.nodes.map((n) => n.slug));
     const neighbors = new Map<string, Set<string>>();
@@ -361,6 +364,42 @@ export function Graph3DView({
         );
       };
 
+      // The renderer re-tests hover at the last pointer position as the scene
+      // moves, even after the pointer has left the canvas or a finger has
+      // lifted. Only a mouse or pen over the canvas counts as hovering.
+      let pointerType = "mouse";
+      let pointerInside = false;
+      const trackPointer = (event: PointerEvent) => {
+        pointerType = event.pointerType;
+        pointerInside = true;
+      };
+      const leavePointer = () => {
+        pointerInside = false;
+        if (hoveredRef.current !== null) {
+          hoveredRef.current = null;
+          instance.refresh();
+          callbacksRef.current.onHoverNode(null);
+        }
+      };
+      container.addEventListener("pointerdown", trackPointer, true);
+      container.addEventListener("pointermove", trackPointer, true);
+      container.addEventListener("pointerleave", leavePointer);
+      pointerCleanup = () => {
+        container.removeEventListener("pointerdown", trackPointer, true);
+        container.removeEventListener("pointermove", trackPointer, true);
+        container.removeEventListener("pointerleave", leavePointer);
+      };
+
+      // The first click of a double-click starts a camera flight that sweeps
+      // the node out from under the pointer, so a quick second click belongs
+      // to that node wherever it lands.
+      let lastFocusClick: { id: string; at: number } | null = null;
+      const takeDoubleClick = () => {
+        const click = lastFocusClick;
+        lastFocusClick = null;
+        return click && performance.now() - click.at < DOUBLE_CLICK_MS ? click.id : null;
+      };
+
       instance.backgroundColor(BG_COLOR)
         .showNavInfo(false)
         .nodeResolution(16)
@@ -418,7 +457,9 @@ export function Graph3DView({
           return 0;
         })
         .linkOpacity(0.35)
-        .onNodeHover((node) => {
+        .onNodeHover((hovered) => {
+          const node = hovered && pointerInside && pointerType !== "touch" ? hovered : null;
+          if (!node && hoveredRef.current === null) return;
           hoveredRef.current = node ? String(node.id) : null;
           instance.refresh();
           callbacksRef.current.onHoverNode(
@@ -433,19 +474,38 @@ export function Graph3DView({
           );
         })
         .onNodeClick((node) => {
+          const doubleClicked = takeDoubleClick();
+          if (doubleClicked) {
+            callbacksRef.current.onNavigateNode(doubleClicked);
+            return;
+          }
           const id = String(node.id);
           const focused = focusedRef.current;
           if (focused === id || (focused && isNeighborOfActive(focused, id))) {
             callbacksRef.current.onNavigateNode(id);
             return;
           }
+          lastFocusClick = { id, at: performance.now() };
           focusedRef.current = id;
           callbacksRef.current.onFocusNode(id);
           instance.refresh();
           cameraTouched = true;
           flyToNode(id);
         })
+        // A link click only matters as the second half of a double-click; the
+        // focused node's highlighted links often sit where the node was.
+        .onLinkClick(() => {
+          const doubleClicked = takeDoubleClick();
+          if (doubleClicked) {
+            callbacksRef.current.onNavigateNode(doubleClicked);
+          }
+        })
         .onBackgroundClick(() => {
+          const doubleClicked = takeDoubleClick();
+          if (doubleClicked) {
+            callbacksRef.current.onNavigateNode(doubleClicked);
+            return;
+          }
           if (focusedRef.current) {
             focusedRef.current = null;
             callbacksRef.current.onClearFocus();
@@ -533,6 +593,7 @@ export function Graph3DView({
         window.clearTimeout(fitTimer);
       }
       controlsCleanup?.();
+      pointerCleanup?.();
       resizeObserver?.disconnect();
       controlsRef.current = null;
       fgRef.current = null;
