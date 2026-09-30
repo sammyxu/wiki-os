@@ -5,6 +5,9 @@ WikiOS 2D/3D knowledge graph. It converts a set of markdown files into a graph
 entirely in the browser — same parsing, wikilink extraction, and classification
 code as the WikiOS server — or renders ready-made graph JSON.
 
+For the full picture — features, motion, interactions, implementation, styling,
+and a porting guide — see [docs/](docs/README.md).
+
 ## Build
 
 ```bash
